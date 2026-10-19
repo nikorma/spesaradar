@@ -87,14 +87,8 @@ class RefreshEngine(private val ctx: Context) {
             if (!settings.sourceEnabled(source)) continue
             progress("${w.query} · ${source.label}")
             val cfg = "{\"source\":\"${source.id}\",\"chains\":${Chains.toJson()}}"
-            var url = urlFor(source, w.query, settings.city)
-            var res = fetcher.fetch(url, cfg)
-            if (source == Source.PROMOQUI && res.items.isEmpty() && !res.blocked) {
-                // Se la pagina della citta' non esiste, prova quella nazionale.
-                url = urlFor(source, w.query, settings.city, national = true)
-                val res2 = fetcher.fetch(url, cfg)
-                if (res2.items.isNotEmpty()) res = res2.copy(method = (res2.method ?: "") + " (nazionale)")
-            }
+            val (url, res) = if (source == Source.PROMOQUI) fetchPromoqui(w, cfg, progress)
+                else urlFor(source, w.query, settings.city).let { u -> u to fetcher.fetch(u, cfg) }
 
             val offers = res.items
                 .filter { Text.relevant(w.query, it.title) }
@@ -138,6 +132,40 @@ class RefreshEngine(private val ctx: Context) {
         withContext(Dispatchers.IO) { db.markRefreshed(w.id, now, errors.joinToString("\n").ifEmpty { null }) }
         return WatchOutcome(w, newOffers, best?.unitPrice, unit, best, previousLow, errors)
     }
+
+    /**
+     * PromoQui ha pagine solo per le ricerche "note" (es. detersivo-piatti, chilly).
+     * Prova la ricerca intera, poi la marca o le parole singole, e si ferma
+     * alla prima pagina che contiene offerte pertinenti.
+     */
+    private suspend fun fetchPromoqui(w: Watch, cfg: String, progress: (String) -> Unit): Pair<String, FetchResult> {
+        val city = settings.city
+        val tried = mutableListOf<String>()
+        var first: Pair<String, FetchResult>? = null
+        for (slug in Text.slugCandidates(w.query)) {
+            val u = "https://www.promoqui.it/$city/offerte/$slug"
+            progress("${w.query} · Volantini · $slug")
+            val r = fetcher.fetch(u, cfg)
+            val rel = r.items.count { Text.relevant(w.query, it.title) }
+            tried += "$slug=$rel/${r.items.size}"
+            if (first == null) first = u to r
+            if (r.blocked) return u to r.withNote(tried)
+            if (rel > 0) return u to r.withNote(tried)
+        }
+        // Ultimo tentativo: pagina nazionale della ricerca intera.
+        val u = "https://www.promoqui.it/offerte/${Text.slug(w.query)}"
+        progress("${w.query} · Volantini · nazionale")
+        val r = fetcher.fetch(u, cfg)
+        val rel = r.items.count { Text.relevant(w.query, it.title) }
+        tried += "nazionale=$rel/${r.items.size}"
+        if (rel > 0) return u to r.withNote(tried)
+        val f = first ?: (u to r)
+        // Nessuna pagina utile: non e' un errore di rete, solo zero offerte.
+        return f.first to f.second.copy(error = null).withNote(tried)
+    }
+
+    private fun FetchResult.withNote(tried: List<String>) =
+        copy(method = (method ?: "—") + " · pagine " + tried.joinToString(", "))
 
     private fun toOffer(watchId: Long, source: Source, r: RawItem, now: Long): Offer {
         val (up, qty) = Units.unitPrice(r.price, r.title, r.unitText)

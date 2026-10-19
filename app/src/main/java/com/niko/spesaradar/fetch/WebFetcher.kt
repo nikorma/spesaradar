@@ -7,6 +7,7 @@ import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -106,6 +107,13 @@ class WebFetcher(private val ctx: Context) {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 pageDone.complete(Unit)
+            }
+
+            override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
+                val code = errorResponse?.statusCode ?: 0
+                if (request?.isForMainFrame == true && (code == 404 || code == 410)) {
+                    loadError = "Pagina non trovata ($code)"
+                }
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {

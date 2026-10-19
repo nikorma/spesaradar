@@ -132,7 +132,7 @@ fun SettingsScreen(vm: AppViewModel) {
 
             Spacer(Modifier.height(32.dp))
             Text(
-                "SpesaRadar 0.1 · © ${Year.now().value} nikorma — Orma Studio",
+                "SpesaRadar 0.2 · © ${Year.now().value} nikorma — Orma Studio",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline
             )

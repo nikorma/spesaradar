@@ -103,6 +103,19 @@ object Text {
 
     fun slug(s: String): String = norm(s).replace(' ', '-')
 
+    /** Indirizzi da provare su PromoQui: ricerca intera, ultima parola (spesso la marca), prima parola, prime due. */
+    fun slugCandidates(query: String): List<String> {
+        val words = norm(query).split(' ').filter { it.length >= 3 }
+        val out = LinkedHashSet<String>()
+        out += slug(query)
+        if (words.size > 1) {
+            out += words.last()
+            out += words.first()
+            out += words.take(2).joinToString("-")
+        }
+        return out.filter { it.isNotBlank() }.take(4)
+    }
+
     /** Parole significative della ricerca (almeno 3 lettere). */
     fun tokens(s: String): List<String> = norm(s).split(' ').filter { it.length >= 3 }
 
