@@ -55,7 +55,7 @@ import com.niko.spesaradar.data.Source
 import com.niko.spesaradar.data.Units
 import kotlin.math.roundToInt
 
-private enum class Filter(val label: String) { ALL("Tutte"), SHOPS("Volantini"), AMAZON("Amazon"), ONLINE("Altri online") }
+private enum class Filter(val label: String) { ALL("Tutte"), SHOPS("Volantini"), SITES("Siti catene"), AMAZON("Amazon"), ONLINE("Altri online") }
 
 @Composable
 fun OffersScreen(vm: AppViewModel, watchId: Long) {
@@ -74,6 +74,7 @@ fun OffersScreen(vm: AppViewModel, watchId: Long) {
             when (filter) {
                 Filter.ALL -> true
                 Filter.SHOPS -> it.source == Source.PROMOQUI
+                Filter.SITES -> it.source == Source.SITES
                 Filter.AMAZON -> it.source == Source.AMAZON
                 Filter.ONLINE -> it.source == Source.TROVAPREZZI
             }
@@ -161,7 +162,7 @@ fun OffersScreen(vm: AppViewModel, watchId: Long) {
                     )
                     HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                 }
-                if (onlyMine && hiddenOthers > 0 && filter != Filter.AMAZON && filter != Filter.ONLINE) {
+                if (onlyMine && hiddenOthers > 0 && (filter == Filter.ALL || filter == Filter.SHOPS)) {
                     item {
                         Text(
                             "$hiddenOthers offerte di altri negozi nascoste · tocca \"Solo le mie catene\" per vederle",
@@ -220,6 +221,7 @@ private fun OfferRow(o: Offer, isBest: Boolean, onOpen: () -> Unit, onHistory: (
                     append(o.store ?: o.source.label)
                     if (o.source != Source.PROMOQUI && o.store != o.source.label) append(" · online")
                     o.qtyText?.let { append(" · ").append(it) }
+                    o.distanceKm?.let { append(" · ").append(String.format(java.util.Locale.ITALY, "%.1f km", it)) }
                 }
                 Text(
                     where,

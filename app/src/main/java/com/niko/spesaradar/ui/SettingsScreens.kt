@@ -86,6 +86,7 @@ fun SettingsScreen(vm: AppViewModel) {
                     SwitchRow(
                         title = when (src) {
                             Source.PROMOQUI -> "Volantini dei negozi (PromoQui)"
+                            Source.SITES -> "Siti delle catene (Carrefour, Esselunga, Conad, Coop, Lidl, Eurospin)"
                             Source.AMAZON -> "Amazon.it"
                             Source.TROVAPREZZI -> "Altri negozi online (Trovaprezzi)"
                         },
@@ -132,7 +133,7 @@ fun SettingsScreen(vm: AppViewModel) {
 
             Spacer(Modifier.height(32.dp))
             Text(
-                "SpesaRadar 0.2 · © ${Year.now().value} nikorma — Orma Studio",
+                "SpesaRadar 0.3 · © ${Year.now().value} nikorma — Orma Studio",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline
             )
@@ -184,7 +185,7 @@ fun DiagnosticsScreen(vm: AppViewModel) {
                 Text("Nessun controllo ancora eseguito.", style = MaterialTheme.typography.bodyMedium)
             }
             logs.forEach { l ->
-                val src = Source.of(l.source)
+                val srcLabel = Source.labelOf(l.source)
                 Card(
                     Modifier.fillMaxWidth().padding(bottom = 10.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -192,7 +193,7 @@ fun DiagnosticsScreen(vm: AppViewModel) {
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(src.label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            Text(srcLabel, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                             Text(fmtTime(l.at), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                         }
                         Text(
@@ -207,7 +208,7 @@ fun DiagnosticsScreen(vm: AppViewModel) {
                         }
                         l.htmlFile?.let { name ->
                             HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                            TextButton(onClick = { shareHtml(ctx, name, src.label) }) {
+                            TextButton(onClick = { shareHtml(ctx, name, srcLabel) }) {
                                 Icon(Icons.Filled.Share, null)
                                 Spacer(Modifier.padding(4.dp))
                                 Text("Condividi pagina")

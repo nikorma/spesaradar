@@ -268,20 +268,78 @@ var SR_EXTRACT = function (cfg) {
     return items;
   }
 
+  // PromoQui / ShopFully: schede con data-testid stabili.
+  function promoqui() {
+    var cards = document.querySelectorAll('a[data-testid="flyer_gib"]');
+    var items = [], seen = {};
+    for (var i = 0; i < cards.length; i++) {
+      var a = cards[i];
+      var h3 = a.querySelector("h3");
+      var title = h3 ? h3.textContent.replace(/\s+/g, " ").trim() : "";
+      if (!title) { var im = a.querySelector("img[alt]"); title = im ? im.getAttribute("alt").trim() : ""; }
+      var pEl = a.querySelector('[data-testid="flyer_gib_price"]');
+      var price = pEl ? pricesIn(pEl.textContent)[0] : null;
+      if (!title || price == null) continue;
+      var rEl = a.querySelector('[data-testid="flyer_item_retailer_name"]');
+      var retailer = rEl ? rEl.textContent.replace(/\s+/g, " ").trim() : null;
+      var href = a.getAttribute("href") || "";
+      var slugM = href.match(/\/volantino\/([^\/?#]+)/);
+      var slug = slugM ? slugM[1].replace(/-/g, " ") : "";
+      var store = findChain(retailer || "") || findChain(slug) || retailer;
+      var dist = null;
+      if (rEl && rEl.parentElement) {
+        var dm = rEl.parentElement.textContent.match(/(\d+(?:[.,]\d+)?)\s*km/i);
+        if (dm) dist = num(dm[1]);
+      }
+      var olds = [];
+      a.querySelectorAll("s, del, .line-through").forEach(function (o) { olds = olds.concat(pricesIn(o.textContent)); });
+      var old = olds.length ? Math.max.apply(null, olds) : null;
+      var txt = chunksOf(a).join(" | ");
+      var um = txt.match(UNIT_RE);
+      var vm = null, ch = chunksOf(a);
+      for (var k = 0; k < ch.length; k++) if (VALID_RE.test(ch[k]) && ch[k].length < 60 && !/km$/i.test(ch[k])) { vm = ch[k]; break; }
+      var key = title + "|" + (retailer || "") + "|" + price;
+      if (seen[key]) continue;
+      seen[key] = 1;
+      items.push({
+        title: title.slice(0, 160),
+        store: store,
+        price: price,
+        oldPrice: old && old > price ? old : null,
+        unitText: um ? um[0] : null,
+        validity: vm,
+        url: abs(href),
+        sponsored: false,
+        distanceKm: dist
+      });
+    }
+    return items;
+  }
+
   function trovaprezziFollow() {
     if (/\/prezzo_|\/offerte\//.test(location.pathname)) return null;
-    var links = document.querySelectorAll('a[href*="/prezzo_"], a[href*="/offerte/"]');
+    var words = String((cfg && cfg.query) || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .split(/[^a-z0-9]+/).filter(function (w) { return w.length >= 3; });
+    var links = document.querySelectorAll('a[href*="/prezzo_"]');
+    var best = null, bestHits = 0;
     for (var i = 0; i < links.length; i++) {
-      var h = links[i].getAttribute("href") || "";
-      if (/\/prezzo_[a-z-]+_.+\.aspx/i.test(h)) return abs(h);
+      var h = (links[i].getAttribute("href") || "").toLowerCase();
+      if (!/\/prezzo_[a-z-]+_.+\.aspx/i.test(h)) continue;
+      if (links[i].closest("nav, header, footer, [class*=menu], [class*=Menu]")) continue;
+      var hits = words.filter(function (w) { return h.indexOf(w.slice(0, 5)) >= 0; }).length;
+      if (hits > bestHits) { best = abs(links[i].getAttribute("href")); bestHits = hits; }
     }
-    return null;
+    return bestHits >= Math.max(1, Math.ceil(words.length / 2)) ? best : null;
   }
 
   var res = { items: [], follow: null, info: { url: location.href, title: document.title, method: "" } };
   try {
     var src = cfg && cfg.source;
-    if (src === "amazon") {
+    if (src === "promoqui") {
+      res.items = promoqui();
+      res.info.method = "promoqui";
+      if (!res.items.length) { res.items = genericCards(document.body); res.info.method = "promoqui-generico"; }
+    } else if (src === "amazon") {
       res.items = amazon();
       res.info.method = "amazon";
       if (!res.items.length) { res.items = genericCards(document.body); res.info.method = "amazon-generico"; }

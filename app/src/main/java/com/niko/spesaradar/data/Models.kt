@@ -5,12 +5,36 @@ import java.util.Locale
 
 enum class Source(val id: String, val label: String, val online: Boolean) {
     PROMOQUI("promoqui", "Volantini", false),
+    SITES("sites", "Siti catene", true),
     AMAZON("amazon", "Amazon", true),
     TROVAPREZZI("trovaprezzi", "Online", true);
 
     companion object {
-        fun of(id: String): Source = entries.firstOrNull { it.id == id } ?: PROMOQUI
+        fun of(id: String): Source = entries.firstOrNull { it.id == id }
+            ?: if (id.startsWith("site:")) SITES else PROMOQUI
+
+        /** Etichetta per la diagnostica: i siti delle catene hanno id "site:<nome>". */
+        fun labelOf(id: String): String =
+            if (id.startsWith("site:")) "Sito " + ChainSites.ALL.firstOrNull { it.id == id.removePrefix("site:") }?.name.orEmpty()
+            else of(id).label
     }
+}
+
+/** Ricerca diretta sui siti delle catene. Gli indirizzi si tarano con la diagnostica. */
+data class ChainSite(val id: String, val name: String, val url: String) {
+    fun urlFor(query: String): String = url.replace("{q}", java.net.URLEncoder.encode(query.trim(), "UTF-8"))
+        .replace("{slug}", Text.slug(query))
+}
+
+object ChainSites {
+    val ALL = listOf(
+        ChainSite("carrefour", "Carrefour", "https://www.carrefour.it/search?q={q}"),
+        ChainSite("esselunga", "Esselunga", "https://spesaonline.esselunga.it/commerce/nav/supermercato/store/ricerca/{q}"),
+        ChainSite("conad", "Conad", "https://spesaonline.conad.it/search?q={q}"),
+        ChainSite("coop", "Coop", "https://www.easycoop.com/search?q={q}"),
+        ChainSite("lidl", "Lidl", "https://www.lidl.it/q/search?q={q}"),
+        ChainSite("eurospin", "Eurospin", "https://www.eurospin.it/?s={q}")
+    )
 }
 
 data class Chain(val name: String, val keys: List<String>)
@@ -70,6 +94,7 @@ data class Offer(
     val validity: String?,
     val url: String?,
     val sponsored: Boolean,
+    val distanceKm: Double?,
     val firstSeen: Long,
     val lastSeen: Long,
     val active: Boolean

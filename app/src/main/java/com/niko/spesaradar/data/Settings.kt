@@ -11,8 +11,8 @@ class Settings(ctx: Context) {
         set(v) = p.edit().putString("city", Text.slug(v).ifEmpty { "bologna" }).apply()
 
     var onlyMyChains: Boolean
-        get() = p.getBoolean("only_my_chains", true)
-        set(v) = p.edit().putBoolean("only_my_chains", v).apply()
+        get() = p.getBoolean("only_my_chains_v2", false)
+        set(v) = p.edit().putBoolean("only_my_chains_v2", v).apply()
 
     var hideSponsored: Boolean
         get() = p.getBoolean("hide_sponsored", true)

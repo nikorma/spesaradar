@@ -12,8 +12,8 @@ android {
         applicationId = "com.niko.spesaradar"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
     }
 
     // Chiave fissa: ogni build di GitHub Actions ha la stessa firma,

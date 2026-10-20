@@ -1,6 +1,7 @@
 package com.niko.spesaradar.fetch
 
 import android.content.Context
+import com.niko.spesaradar.data.ChainSites
 import com.niko.spesaradar.data.Chains
 import com.niko.spesaradar.data.Db
 import com.niko.spesaradar.data.FetchLog
@@ -55,6 +56,7 @@ class RefreshEngine(private val ctx: Context) {
                 else "https://www.promoqui.it/$city/offerte/${Text.slug(query)}"
             Source.AMAZON -> "https://www.amazon.it/s?k=$q"
             Source.TROVAPREZZI -> "https://www.trovaprezzi.it/categoria.aspx?libera=$q&id=-1"
+            Source.SITES -> ""
         }
     }
 
@@ -86,33 +88,35 @@ class RefreshEngine(private val ctx: Context) {
         for (source in Source.entries) {
             if (!settings.sourceEnabled(source)) continue
             progress("${w.query} · ${source.label}")
-            val cfg = "{\"source\":\"${source.id}\",\"chains\":${Chains.toJson()}}"
+            val cfg = cfgFor(source.id, w.query)
+
+            if (source == Source.SITES) {
+                // Un giro su ogni sito di catena; offerte salvate insieme, diagnostica separata.
+                val all = mutableListOf<Offer>()
+                var anyOk = false
+                for (site in ChainSites.ALL) {
+                    progress("${w.query} · ${site.name}")
+                    val u = site.urlFor(w.query)
+                    val r = fetcher.fetch(u, cfgFor("site", w.query), timeoutMs = 45_000)
+                    val offers = pick(w, r).map { toOffer(w.id, source, it.copy(store = site.name), now) }
+                    withContext(Dispatchers.IO) { log("site:" + site.id, now, u, r, offers.size) }
+                    if (r.error == null && !r.blocked) anyOk = true
+                    all += offers
+                    delay(1_000)
+                }
+                withContext(Dispatchers.IO) {
+                    if (anyOk) newOffers += db.saveSourceRun(w.id, source, all.distinctBy { it.key }, now, day)
+                    else errors += "Siti catene: nessun sito raggiungibile"
+                }
+                continue
+            }
+
             val (url, res) = if (source == Source.PROMOQUI) fetchPromoqui(w, cfg, progress)
                 else urlFor(source, w.query, settings.city).let { u -> u to fetcher.fetch(u, cfg) }
-
-            val offers = res.items
-                .filter { Text.relevant(w.query, it.title) }
-                .filter { !(settings.hideSponsored && it.sponsored) }
-                .take(MAX_PER_SOURCE)
-                .map { toOffer(w.id, source, it, now) }
+            val offers = pick(w, res).map { toOffer(w.id, source, it, now) }
 
             withContext(Dispatchers.IO) {
-                val htmlName = res.html?.let { saveHtml(source, it) }
-                db.saveLog(
-                    FetchLog(
-                        source = source.id,
-                        at = now,
-                        url = res.finalUrl ?: url,
-                        count = res.items.size,
-                        method = (res.method ?: "—") +
-                            (if (offers.size != res.items.size) " · ${offers.size} pertinenti" else ""),
-                        error = when {
-                            res.blocked -> "Il sito ha chiesto una verifica anti-robot"
-                            else -> res.error
-                        },
-                        htmlFile = htmlName
-                    )
-                )
+                log(source.id, now, url, res, offers.size)
                 // Se la fonte ha fallito non tocco le offerte gia' salvate.
                 if (res.error == null && !res.blocked) {
                     newOffers += db.saveSourceRun(w.id, source, offers, now, day)
@@ -139,29 +143,42 @@ class RefreshEngine(private val ctx: Context) {
      * alla prima pagina che contiene offerte pertinenti.
      */
     private suspend fun fetchPromoqui(w: Watch, cfg: String, progress: (String) -> Unit): Pair<String, FetchResult> {
-        val city = settings.city
         val tried = mutableListOf<String>()
         var first: Pair<String, FetchResult>? = null
         for (slug in Text.slugCandidates(w.query)) {
-            val u = "https://www.promoqui.it/$city/offerte/$slug"
+            val u = "https://www.promoqui.it/offerte/$slug"
             progress("${w.query} · Volantini · $slug")
             val r = fetcher.fetch(u, cfg)
             val rel = r.items.count { Text.relevant(w.query, it.title) }
             tried += "$slug=$rel/${r.items.size}"
             if (first == null) first = u to r
-            if (r.blocked) return u to r.withNote(tried)
-            if (rel > 0) return u to r.withNote(tried)
+            if (r.blocked || rel > 0) return u to r.withNote(tried)
         }
-        // Ultimo tentativo: pagina nazionale della ricerca intera.
-        val u = "https://www.promoqui.it/offerte/${Text.slug(w.query)}"
-        progress("${w.query} · Volantini · nazionale")
-        val r = fetcher.fetch(u, cfg)
-        val rel = r.items.count { Text.relevant(w.query, it.title) }
-        tried += "nazionale=$rel/${r.items.size}"
-        if (rel > 0) return u to r.withNote(tried)
-        val f = first ?: (u to r)
+        val f = first!!
         // Nessuna pagina utile: non e' un errore di rete, solo zero offerte.
         return f.first to f.second.copy(error = null).withNote(tried)
+    }
+
+    private fun cfgFor(source: String, query: String) =
+        "{\"source\":\"$source\",\"query\":${Chains.jsonStr(query)},\"chains\":${Chains.toJson()}}"
+
+    private fun pick(w: Watch, r: FetchResult): List<RawItem> = r.items
+        .filter { Text.relevant(w.query, it.title) }
+        .filter { !(settings.hideSponsored && it.sponsored) }
+        .take(MAX_PER_SOURCE)
+
+    private fun log(id: String, now: Long, url: String, r: FetchResult, kept: Int) {
+        db.saveLog(
+            FetchLog(
+                source = id,
+                at = now,
+                url = r.finalUrl ?: url,
+                count = r.items.size,
+                method = (r.method ?: "—") + (if (kept != r.items.size) " · $kept pertinenti" else ""),
+                error = if (r.blocked) "Il sito ha chiesto una verifica anti-robot" else r.error,
+                htmlFile = r.html?.let { saveHtml(id, it) }
+            )
+        )
     }
 
     private fun FetchResult.withNote(tried: List<String>) =
@@ -188,15 +205,16 @@ class RefreshEngine(private val ctx: Context) {
             validity = r.validity,
             url = r.url,
             sponsored = r.sponsored,
+            distanceKm = r.distanceKm,
             firstSeen = now,
             lastSeen = now,
             active = true
         )
     }
 
-    private fun saveHtml(source: Source, html: String): String? = try {
+    private fun saveHtml(id: String, html: String): String? = try {
         val dir = File(ctx.cacheDir, "diagnostica").apply { mkdirs() }
-        val f = File(dir, "${source.id}.html")
+        val f = File(dir, id.replace(':', '_') + ".html")
         f.writeText(html)
         f.name
     } catch (e: Exception) {

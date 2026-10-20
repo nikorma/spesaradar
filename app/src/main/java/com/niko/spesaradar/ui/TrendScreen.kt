@@ -53,7 +53,7 @@ import java.util.Locale
 private enum class TrendFilter(val label: String, val sources: Set<Source>?) {
     ALL("Tutte le fonti", null),
     SHOPS("Volantini", setOf(Source.PROMOQUI)),
-    ONLINE("Online", setOf(Source.AMAZON, Source.TROVAPREZZI))
+    ONLINE("Online", setOf(Source.SITES, Source.AMAZON, Source.TROVAPREZZI))
 }
 
 @Composable

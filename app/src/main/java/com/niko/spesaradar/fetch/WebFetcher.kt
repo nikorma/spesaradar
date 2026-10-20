@@ -32,7 +32,8 @@ data class RawItem(
     val unitText: String?,
     val validity: String?,
     val url: String?,
-    val sponsored: Boolean
+    val sponsored: Boolean,
+    val distanceKm: Double?
 )
 
 data class FetchResult(
@@ -142,7 +143,15 @@ class WebFetcher(private val ctx: Context) {
                 pageDone.await()
                 continue
             }
-            if (parsed.items.isNotEmpty() || parsed.blocked) break
+            if (parsed.blocked) break
+            if (parsed.items.isNotEmpty()) {
+                // Le liste lunghe caricano altre offerte scorrendo: un ultimo giro e tengo il piu' ricco.
+                wv.eval("window.scrollTo(0, document.body ? document.body.scrollHeight : 0); 1")
+                delay(2_000)
+                val more = parseJs(wv.eval(script + "\n;SR_EXTRACT($cfgJson);"))
+                if (more.items.size > parsed.items.size) last = more
+                break
+            }
             // Scorre in basso per far caricare le offerte "pigre".
             wv.eval("window.scrollTo(0, document.body ? document.body.scrollHeight : 0); 1")
         }
@@ -195,7 +204,8 @@ class WebFetcher(private val ctx: Context) {
                             unitText = jo.strOrNull("unitText"),
                             validity = jo.strOrNull("validity"),
                             url = jo.strOrNull("url"),
-                            sponsored = jo.optBoolean("sponsored", false)
+                            sponsored = jo.optBoolean("sponsored", false),
+                            distanceKm = jo.optDouble("distanceKm", Double.NaN).takeUnless { d -> d.isNaN() }
                         )
                     )
                 }

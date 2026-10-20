@@ -6,7 +6,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.db", null, 1) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.db", null, 2) {
 
     companion object {
         @Volatile private var instance: Db? = null
@@ -40,6 +40,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
                 validity TEXT,
                 url TEXT,
                 sponsored INTEGER NOT NULL DEFAULT 0,
+                distance REAL,
                 first_seen INTEGER NOT NULL,
                 last_seen INTEGER NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1,
@@ -68,7 +69,8 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Le versioni future aggiungeranno qui le migrazioni, senza cancellare lo storico.
+        // Migrazioni senza cancellare lo storico.
+        if (oldVersion < 2) db.execSQL("ALTER TABLE offer ADD COLUMN distance REAL")
     }
 
     // ---------- Osservati ----------
@@ -158,6 +160,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
                     put("validity", o.validity)
                     put("url", o.url)
                     put("sponsored", if (o.sponsored) 1 else 0)
+                    putOrNull("distance", o.distanceKm)
                     put("last_seen", now)
                     put("active", 1)
                 }
@@ -187,7 +190,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
 
     fun offers(watchId: Long, onlyActive: Boolean = true): List<Offer> {
         val sql = "SELECT watch_id, okey, source, store, title, price, old_price, unit_price, unit, qty_text, " +
-            "validity, url, sponsored, first_seen, last_seen, active FROM offer WHERE watch_id=?" +
+            "validity, url, sponsored, first_seen, last_seen, active, distance FROM offer WHERE watch_id=?" +
             (if (onlyActive) " AND active=1" else "")
         return readableDatabase.rawQuery(sql, arrayOf(watchId.toString())).use { c ->
             buildList {
@@ -208,7 +211,8 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
                         sponsored = c.getInt(12) == 1,
                         firstSeen = c.getLong(13),
                         lastSeen = c.getLong(14),
-                        active = c.getInt(15) == 1
+                        active = c.getInt(15) == 1,
+                        distanceKm = c.doubleOrNull(16)
                     )
                 )
             }
