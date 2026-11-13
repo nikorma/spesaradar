@@ -6,7 +6,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.db", null, 2) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.db", null, 3) {
 
     companion object {
         @Volatile private var instance: Db? = null
@@ -41,6 +41,8 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
                 url TEXT,
                 sponsored INTEGER NOT NULL DEFAULT 0,
                 distance REAL,
+                image TEXT,
+                end_date TEXT,
                 first_seen INTEGER NOT NULL,
                 last_seen INTEGER NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1,
@@ -56,6 +58,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
                 unit TEXT,
                 PRIMARY KEY(watch_id, okey, day))"""
         )
+        createFlyerTables(db)
         db.execSQL(
             """CREATE TABLE fetch_log(
                 source TEXT PRIMARY KEY,
@@ -71,6 +74,42 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // Migrazioni senza cancellare lo storico.
         if (oldVersion < 2) db.execSQL("ALTER TABLE offer ADD COLUMN distance REAL")
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE offer ADD COLUMN image TEXT")
+            db.execSQL("ALTER TABLE offer ADD COLUMN end_date TEXT")
+            createFlyerTables(db)
+        }
+    }
+
+    private fun createFlyerTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS flyer(
+                id TEXT PRIMARY KEY,
+                chain TEXT NOT NULL,
+                slug TEXT NOT NULL,
+                start TEXT,
+                end_date TEXT,
+                logo TEXT,
+                item_count INTEGER NOT NULL DEFAULT 0,
+                fetched INTEGER NOT NULL)"""
+        )
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS flyer_item(
+                flyer_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                chain TEXT NOT NULL,
+                title TEXT NOT NULL,
+                brand TEXT,
+                price REAL NOT NULL,
+                old_price REAL,
+                sale TEXT,
+                page INTEGER,
+                image TEXT,
+                url TEXT,
+                start TEXT,
+                end_date TEXT,
+                PRIMARY KEY(flyer_id, item_id))"""
+        )
     }
 
     // ---------- Osservati ----------
@@ -161,6 +200,8 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
                     put("url", o.url)
                     put("sponsored", if (o.sponsored) 1 else 0)
                     putOrNull("distance", o.distanceKm)
+                    put("image", o.image)
+                    put("end_date", o.endDate)
                     put("last_seen", now)
                     put("active", 1)
                 }
@@ -190,7 +231,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
 
     fun offers(watchId: Long, onlyActive: Boolean = true): List<Offer> {
         val sql = "SELECT watch_id, okey, source, store, title, price, old_price, unit_price, unit, qty_text, " +
-            "validity, url, sponsored, first_seen, last_seen, active, distance FROM offer WHERE watch_id=?" +
+            "validity, url, sponsored, first_seen, last_seen, active, distance, image, end_date FROM offer WHERE watch_id=?" +
             (if (onlyActive) " AND active=1" else "")
         return readableDatabase.rawQuery(sql, arrayOf(watchId.toString())).use { c ->
             buildList {
@@ -212,7 +253,9 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
                         firstSeen = c.getLong(13),
                         lastSeen = c.getLong(14),
                         active = c.getInt(15) == 1,
-                        distanceKm = c.doubleOrNull(16)
+                        distanceKm = c.doubleOrNull(16),
+                        image = c.stringOrNull(17),
+                        endDate = c.stringOrNull(18)
                     )
                 )
             }
@@ -243,6 +286,94 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "spesaradar.d
         "SELECT day, price FROM history WHERE watch_id=? AND okey=? ORDER BY day",
         arrayOf(watchId.toString(), key)
     ).use { c -> buildList { while (c.moveToNext()) add(TrendPoint(c.getString(0), c.getDouble(1))) } }
+
+    // ---------- Volantini ----------
+
+    fun flyers(): List<Flyer> = readableDatabase.rawQuery(
+        "SELECT id, chain, slug, start, end_date, logo, item_count, fetched FROM flyer ORDER BY chain, end_date", null
+    ).use { c ->
+        buildList {
+            while (c.moveToNext()) add(
+                Flyer(
+                    c.getString(0), c.getString(1), c.getString(2), c.stringOrNull(3), c.stringOrNull(4),
+                    c.stringOrNull(5), c.getInt(6), c.getLong(7)
+                )
+            )
+        }
+    }
+
+    fun flyerItemCount(id: String): Int = readableDatabase.rawQuery(
+        "SELECT COUNT(*) FROM flyer_item WHERE flyer_id=?", arrayOf(id)
+    ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
+
+    fun saveFlyer(f: Flyer, items: List<FlyerItem>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("flyer_item", "flyer_id=?", arrayOf(f.id))
+            for (i in items) {
+                val cv = ContentValues().apply {
+                    put("flyer_id", i.flyerId)
+                    put("item_id", i.itemId)
+                    put("chain", i.chain)
+                    put("title", i.title)
+                    put("brand", i.brand)
+                    put("price", i.price)
+                    putOrNull("old_price", i.oldPrice)
+                    put("sale", i.sale)
+                    if (i.page == null) putNull("page") else put("page", i.page)
+                    put("image", i.image)
+                    put("url", i.url)
+                    put("start", i.start)
+                    put("end_date", i.end)
+                }
+                db.insertWithOnConflict("flyer_item", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            val cv = ContentValues().apply {
+                put("id", f.id)
+                put("chain", f.chain)
+                put("slug", f.slug)
+                put("start", f.start)
+                put("end_date", f.end)
+                put("logo", f.logo)
+                put("item_count", items.size)
+                put("fetched", f.fetched)
+            }
+            db.insertWithOnConflict("flyer", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Toglie i volantini scaduti (data di fine prima di oggi). */
+    fun deleteExpiredFlyers(today: String) {
+        val db = writableDatabase
+        db.execSQL("DELETE FROM flyer_item WHERE end_date IS NOT NULL AND end_date < ?", arrayOf(today))
+        db.execSQL("DELETE FROM flyer WHERE end_date IS NOT NULL AND end_date < ?", arrayOf(today))
+    }
+
+    fun flyerItems(flyerId: String? = null, chain: String? = null): List<FlyerItem> {
+        val where = mutableListOf<String>()
+        val args = mutableListOf<String>()
+        if (flyerId != null) { where += "flyer_id=?"; args += flyerId }
+        if (chain != null) { where += "chain=?"; args += chain }
+        val sql = "SELECT flyer_id, item_id, chain, title, brand, price, old_price, sale, page, image, url, start, end_date " +
+            "FROM flyer_item" + (if (where.isEmpty()) "" else " WHERE " + where.joinToString(" AND ")) +
+            " ORDER BY page, title"
+        return readableDatabase.rawQuery(sql, args.toTypedArray()).use { c ->
+            buildList {
+                while (c.moveToNext()) add(
+                    FlyerItem(
+                        c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.stringOrNull(4),
+                        c.getDouble(5), c.doubleOrNull(6), c.stringOrNull(7),
+                        if (c.isNull(8)) null else c.getInt(8),
+                        c.stringOrNull(9), c.stringOrNull(10), c.stringOrNull(11), c.stringOrNull(12)
+                    )
+                )
+            }
+        }
+    }
 
     // ---------- Diagnostica ----------
 

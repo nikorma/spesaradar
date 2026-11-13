@@ -26,26 +26,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.ShoppingCart
+import androidx.compose.material.icons.outlined.TrendingDown
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,11 +57,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.niko.spesaradar.data.Units
 import com.niko.spesaradar.data.WatchSummary
 import java.text.SimpleDateFormat
@@ -79,10 +83,41 @@ fun AppRoot(vm: AppViewModel, onExit: () -> Unit) {
     BackHandler {
         if (!vm.back()) onExit()
     }
-    Scaffold(snackbarHost = { SnackbarHost(snack) }) { pad ->
+    val s = vm.screen
+    val topLevel = s is Screen.Home || s is Screen.Flyers || s is Screen.SettingsScreen
+    Scaffold(
+        snackbarHost = { SnackbarHost(snack) },
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            if (topLevel) {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
+                    NavigationBarItem(
+                        selected = s is Screen.Home,
+                        onClick = { vm.tab(Screen.Home) },
+                        icon = { Icon(Icons.Outlined.Visibility, null) },
+                        label = { Text("Osservati") }
+                    )
+                    NavigationBarItem(
+                        selected = s is Screen.Flyers,
+                        onClick = { vm.tab(Screen.Flyers) },
+                        icon = { Icon(Icons.Outlined.ShoppingCart, null) },
+                        label = { Text("Volantini") }
+                    )
+                    NavigationBarItem(
+                        selected = s is Screen.SettingsScreen,
+                        onClick = { vm.tab(Screen.SettingsScreen) },
+                        icon = { Icon(Icons.Outlined.Settings, null) },
+                        label = { Text("Impostazioni") }
+                    )
+                }
+            }
+        }
+    ) { pad ->
         Box(Modifier.padding(pad)) {
-            when (val s = vm.screen) {
+            when (s) {
                 is Screen.Home -> HomeScreen(vm)
+                is Screen.Flyers -> FlyersScreen(vm)
+                is Screen.FlyerBrowse -> FlyerBrowseScreen(vm, s.chain)
                 is Screen.Offers -> OffersScreen(vm, s.watchId)
                 is Screen.Trend -> TrendScreen(vm, s.watchId, s.offerKey)
                 is Screen.SettingsScreen -> SettingsScreen(vm)
@@ -92,12 +127,28 @@ fun AppRoot(vm: AppViewModel, onExit: () -> Unit) {
     }
 }
 
+/** Barra di avanzamento sottile con la frase "Volantini · Lidl…". */
+@Composable
+fun ProgressStrip(vm: AppViewModel) {
+    if (!vm.refreshing) return
+    Column(Modifier.fillMaxWidth()) {
+        LinearProgressIndicator(Modifier.fillMaxWidth())
+        Text(
+            vm.progress,
+            Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 @Composable
 fun HomeScreen(vm: AppViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // Permesso notifiche (Android 13+), chiesto una volta all'avvio.
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33) askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -112,69 +163,52 @@ fun HomeScreen(vm: AppViewModel) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("SpesaRadar", fontWeight = FontWeight.Medium) },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                actionIconContentColor = MaterialTheme.colorScheme.onPrimary
-            ),
-            actions = {
-                if (vm.refreshing) {
-                    CircularProgressIndicator(
-                        Modifier.size(22.dp).padding(end = 4.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(Modifier.width(12.dp))
-                } else {
-                    IconButton(onClick = { vm.refreshAll() }) { Icon(Icons.Filled.Refresh, "Aggiorna tutto") }
-                }
-                IconButton(onClick = { vm.open(Screen.SettingsScreen) }) { Icon(Icons.Filled.Settings, "Impostazioni") }
+        BigHeader(
+            title = "SpesaRadar",
+            subtitle = "${vm.settings.city.replaceFirstChar { it.uppercase() }} · " +
+                if (vm.summaries.isEmpty()) "nessun prodotto osservato" else "${vm.summaries.size} prodotti osservati"
+        ) {
+            if (vm.refreshing) {
+                CircularProgressIndicator(Modifier.size(24.dp).padding(2.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(12.dp))
+            } else {
+                IconButton(onClick = { vm.refreshAll() }) { Icon(Icons.Filled.Refresh, "Aggiorna tutto") }
             }
-        )
-        if (vm.refreshing) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-            Text(
-                vm.progress,
-                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
+        ProgressStrip(vm)
 
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                placeholder = { Text("Prodotto o marca, es. detersivo piatti") },
-                leadingIcon = { Icon(Icons.Filled.Search, null) },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { submit() })
-            )
-            IconButton(onClick = { submit() }) { Icon(Icons.Filled.Add, "Osserva") }
-        }
+        TextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            singleLine = true,
+            shape = RoundedCornerShape(28.dp),
+            placeholder = { Text("Aggiungi prodotto o marca") },
+            leadingIcon = { Icon(Icons.Filled.Search, null) },
+            trailingIcon = {
+                if (query.isNotBlank()) {
+                    IconButton(onClick = { submit() }) { Icon(Icons.AutoMirrored.Filled.ArrowForward, "Osserva") }
+                }
+            },
+            colors = TextFieldDefaults.colors(
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface
+            ),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { submit() })
+        )
 
         if (vm.summaries.isEmpty()) {
             EmptyHome()
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(vm.summaries, key = { it.watch.id }) { s ->
                     WatchCard(s) { vm.open(Screen.Offers(s.watch.id)) }
-                }
-                item {
-                    Text(
-                        "${vm.settings.city.replaceFirstChar { it.uppercase() }} · controllo automatico alle " +
-                            String.format(Locale.ITALY, "%02d:00", vm.settings.hour),
-                        Modifier.fillMaxWidth().padding(top = 8.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
@@ -184,12 +218,11 @@ fun HomeScreen(vm: AppViewModel) {
 @Composable
 private fun EmptyHome() {
     Column(Modifier.fillMaxWidth().padding(24.dp)) {
-        Text("Inizia a osservare un prodotto", style = MaterialTheme.typography.titleMedium)
+        Text("Cosa vuoi tenere d'occhio?", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Scrivi una tipologia (\"detersivo piatti\") o una marca (\"Svelto\"). " +
-                "SpesaRadar cerca le offerte nei volantini della tua città, su Amazon e nei negozi online, " +
-                "le ordina per prezzo al litro o al chilo e ogni mattina controlla se ci sono novità.",
+            "Scrivi una tipologia (\"detersivo piatti\") o una marca (\"Chilly\"). SpesaRadar la cerca nei volantini " +
+                "completi delle tue catene, su Amazon e online, e ogni mattina ti avvisa se trova un prezzo migliore.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -198,52 +231,65 @@ private fun EmptyHome() {
 
 @Composable
 private fun WatchCard(s: WatchSummary, onClick: () -> Unit) {
-    Card(
+    val best = s.best
+    Surface(
         Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = CardDefaults.outlinedCardBorder()
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 1.dp
     ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            ProductImage(best?.image, Modifier.size(72.dp), corner = 14.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
                 Text(
                     s.watch.query.replaceFirstChar { it.uppercase() },
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (s.historicLow) Badge("Minimo storico", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+                val line = when {
+                    s.watch.lastRefresh == 0L -> "In attesa del primo controllo…"
+                    s.activeCount == 0 -> "Nessuna offerta in questo momento"
+                    s.activeCount == 1 -> "1 offerta"
+                    else -> "${s.activeCount} offerte"
+                }
+                Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (best != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ChainTag(best.store ?: best.source.label, Modifier.weight(1f, fill = false))
+                        if (s.historicLow) {
+                            Spacer(Modifier.width(6.dp))
+                            Icon(Icons.Outlined.TrendingDown, "Minimo storico", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+                if (s.watch.lastError != null) {
+                    Text("Alcune fonti con problemi", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
             }
-            val best = s.best
-            val line = when {
-                s.watch.lastRefresh == 0L -> "In attesa del primo controllo…"
-                s.activeCount == 0 -> "Nessuna offerta trovata"
-                best != null -> "${s.activeCount} offerte · da ${Units.perUnit(best.unitPrice, best.unit)}"
-                else -> "${s.activeCount} offerte"
-            }
-            Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (best != null) {
-                Text(
-                    "${best.store ?: best.source.label} · ${best.title}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (s.watch.lastRefresh > 0) {
-                Text(
-                    "Aggiornato " + fmtTime(s.watch.lastRefresh) + if (s.watch.lastError != null) " · con problemi" else "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (s.watch.lastError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-                )
+                Spacer(Modifier.width(8.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("da", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Text(Units.euro(best.price), fontWeight = FontWeight.Bold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
+                    if (best.unitPrice != null) {
+                        Text(
+                            Units.perUnit(best.unitPrice, best.unit),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun Badge(text: String, bg: androidx.compose.ui.graphics.Color, fg: androidx.compose.ui.graphics.Color) {
+fun Badge(text: String, bg: Color, fg: Color) {
     Surface(color = bg, shape = RoundedCornerShape(6.dp)) {
         Text(text, Modifier.padding(horizontal = 6.dp, vertical = 2.dp), color = fg, style = MaterialTheme.typography.labelSmall)
     }

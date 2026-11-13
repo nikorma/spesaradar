@@ -33,8 +33,18 @@ data class RawItem(
     val validity: String?,
     val url: String?,
     val sponsored: Boolean,
-    val distanceKm: Double?
+    val distanceKm: Double?,
+    val image: String? = null,
+    val startDate: String? = null,
+    val endDate: String? = null,
+    val sale: String? = null,
+    val page: Int? = null,
+    val gibId: String? = null,
+    val flyerId: String? = null
 )
+
+/** Un volantino elencato nella pagina di una catena. */
+data class FlyerRef(val id: String, val start: String?, val end: String?)
 
 data class FetchResult(
     val items: List<RawItem>,
@@ -42,7 +52,10 @@ data class FetchResult(
     val method: String?,
     val error: String?,
     val blocked: Boolean,
-    val html: String?
+    val html: String?,
+    val flyers: List<FlyerRef> = emptyList(),
+    val logo: String? = null,
+    val name: String? = null
 )
 
 /**
@@ -143,7 +156,7 @@ class WebFetcher(private val ctx: Context) {
                 pageDone.await()
                 continue
             }
-            if (parsed.blocked) break
+            if (parsed.blocked || parsed.flyers.isNotEmpty()) break
             if (parsed.items.isNotEmpty()) {
                 // Le liste lunghe caricano altre offerte scorrendo: un ultimo giro e tengo il piu' ricco.
                 wv.eval("window.scrollTo(0, document.body ? document.body.scrollHeight : 0); 1")
@@ -164,7 +177,10 @@ class WebFetcher(private val ctx: Context) {
             method = p?.method,
             error = loadError ?: p?.error ?: if (p == null) "Nessuna risposta dalla pagina" else null,
             blocked = p?.blocked ?: false,
-            html = html
+            html = html,
+            flyers = p?.flyers ?: emptyList(),
+            logo = p?.logo,
+            name = p?.name
         )
     }
 
@@ -181,7 +197,10 @@ class WebFetcher(private val ctx: Context) {
         val follow: String?,
         val method: String?,
         val error: String?,
-        val blocked: Boolean
+        val blocked: Boolean,
+        val flyers: List<FlyerRef> = emptyList(),
+        val logo: String? = null,
+        val name: String? = null
     )
 
     private fun parseJs(raw: String?): ParsedJs {
@@ -205,18 +224,36 @@ class WebFetcher(private val ctx: Context) {
                             validity = jo.strOrNull("validity"),
                             url = jo.strOrNull("url"),
                             sponsored = jo.optBoolean("sponsored", false),
-                            distanceKm = jo.optDouble("distanceKm", Double.NaN).takeUnless { d -> d.isNaN() }
+                            distanceKm = jo.optDouble("distanceKm", Double.NaN).takeUnless { d -> d.isNaN() },
+                            image = jo.strOrNull("image"),
+                            startDate = jo.strOrNull("startDate"),
+                            endDate = jo.strOrNull("endDate"),
+                            sale = jo.strOrNull("sale"),
+                            page = jo.optInt("page", 0).takeIf { p -> p > 0 },
+                            gibId = jo.strOrNull("gibId"),
+                            flyerId = jo.strOrNull("flyerId")
                         )
                     )
                 }
             }
             val info = o.optJSONObject("info")
+            val fa = o.optJSONArray("flyers") ?: JSONArray()
+            val flyers = buildList {
+                for (i in 0 until fa.length()) {
+                    val f = fa.optJSONObject(i) ?: continue
+                    val id = f.strOrNull("id") ?: continue
+                    add(FlyerRef(id, f.strOrNull("start"), f.strOrNull("end")))
+                }
+            }
             ParsedJs(
                 items = items,
                 follow = o.strOrNull("follow"),
                 method = info?.strOrNull("method"),
-                error = info?.strOrNull("error"),
-                blocked = info?.optBoolean("blocked", false) ?: false
+                error = info?.strOrNull("error") ?: if (info?.optBoolean("notFound", false) == true) "Catena non trovata" else null,
+                blocked = info?.optBoolean("blocked", false) ?: false,
+                flyers = flyers,
+                logo = info?.strOrNull("logo"),
+                name = info?.strOrNull("name")
             )
         } catch (e: Exception) {
             ParsedJs(emptyList(), null, null, "Risposta non leggibile: ${e.message}", false)

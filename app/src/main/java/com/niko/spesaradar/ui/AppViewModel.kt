@@ -9,6 +9,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.niko.spesaradar.data.Db
 import com.niko.spesaradar.data.FetchLog
+import com.niko.spesaradar.data.Flyer
+import com.niko.spesaradar.data.FlyerItem
 import com.niko.spesaradar.data.Offer
 import com.niko.spesaradar.data.Settings
 import com.niko.spesaradar.data.Source
@@ -24,6 +26,8 @@ import java.time.LocalDate
 
 sealed class Screen {
     data object Home : Screen()
+    data object Flyers : Screen()
+    data class FlyerBrowse(val chain: String) : Screen()
     data class Offers(val watchId: Long) : Screen()
     data class Trend(val watchId: Long, val offerKey: String? = null) : Screen()
     data object SettingsScreen : Screen()
@@ -66,6 +70,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
+    /** Cambio scheda dalla barra in basso: azzera la cronologia. */
+    fun tab(s: Screen) {
+        backStack.clear()
+        screen = s
+        reload()
+    }
+
     fun openFromNotification(watchId: Long) {
         backStack.clear()
         screen = Screen.Home
@@ -106,6 +117,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun logs(): List<FetchLog> = db.logs()
 
+    fun flyers(): List<Flyer> = db.flyers()
+
+    fun flyerItems(chain: String): List<FlyerItem> = db.flyerItems(chain = chain)
+
+    /** Cambia a ogni lettura dei volantini, per ridisegnare le liste. */
+    var flyerVersion by mutableStateOf(0)
+        private set
+
+    fun refreshFlyers(force: Boolean = true) {
+        if (refreshing) return
+        viewModelScope.launch {
+            refreshing = true
+            try {
+                val n = engine.refreshFlyers(force) { p -> progress = p }
+                message = if (n > 0) "Letti $n volantini" else "Volantini aggiornati"
+            } catch (e: Exception) {
+                message = "Errore: ${e.message}"
+            } finally {
+                refreshing = false
+                progress = ""
+                flyerVersion++
+                reload()
+            }
+        }
+    }
+
     fun addWatch(query: String) {
         val q = query.trim()
         if (q.length < 2) return
@@ -142,6 +179,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 Notifier.notifyOutcomes(getApplication<Application>(), out)
                 val errs = out.count { it.errors.isNotEmpty() }
                 message = if (errs == 0) "Aggiornato" else "Aggiornato, con problemi su $errs prodotti (vedi Diagnostica)"
+                flyerVersion++
             } catch (e: Exception) {
                 message = "Errore: ${e.message}"
             } finally {

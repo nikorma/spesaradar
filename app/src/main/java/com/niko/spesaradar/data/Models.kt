@@ -4,7 +4,8 @@ import java.text.Normalizer
 import java.util.Locale
 
 enum class Source(val id: String, val label: String, val online: Boolean) {
-    PROMOQUI("promoqui", "Volantini", false),
+    FLYERS("flyers", "Volantini catene", false),
+    PROMOQUI("promoqui", "Altri volantini", false),
     SITES("sites", "Siti catene", true),
     AMAZON("amazon", "Amazon", true),
     TROVAPREZZI("trovaprezzi", "Online", true);
@@ -14,9 +15,11 @@ enum class Source(val id: String, val label: String, val online: Boolean) {
             ?: if (id.startsWith("site:")) SITES else PROMOQUI
 
         /** Etichetta per la diagnostica: i siti delle catene hanno id "site:<nome>". */
-        fun labelOf(id: String): String =
-            if (id.startsWith("site:")) "Sito " + ChainSites.ALL.firstOrNull { it.id == id.removePrefix("site:") }?.name.orEmpty()
-            else of(id).label
+        fun labelOf(id: String): String = when {
+            id.startsWith("site:") -> "Sito " + ChainSites.ALL.firstOrNull { it.id == id.removePrefix("site:") }?.name.orEmpty()
+            id.startsWith("flyer:") -> "Volantino " + id.removePrefix("flyer:")
+            else -> of(id).label
+        }
     }
 }
 
@@ -37,24 +40,36 @@ object ChainSites {
     )
 }
 
-data class Chain(val name: String, val keys: List<String>)
+/**
+ * Una catena: nome, nomi con cui compare sui siti, slug delle sue pagine volantino su PromoQui
+ * e colore per la grafica.
+ */
+data class Chain(val name: String, val keys: List<String>, val slugs: List<String> = emptyList(), val color: Long = 0xFF0F6E56)
 
 object Chains {
     /** Le catene di Niko. Le chiavi sono i nomi con cui compaiono sui siti. */
     val MINE = listOf(
-        Chain("Despar", listOf("despar", "eurospar", "interspar")),
-        Chain("Lidl", listOf("lidl")),
-        Chain("Eurospin", listOf("eurospin")),
-        Chain("Esselunga", listOf("esselunga", "esselunga superstore", "laesse")),
-        Chain("Carrefour", listOf("carrefour", "carrefour express", "carrefour market", "carrefour iper")),
-        Chain("Alì", listOf("alì", "alìper", "aliper", "alì supermercati", "ali supermercati")),
-        Chain("Coop", listOf("coop", "ipercoop", "coop alleanza", "coop alleanza 3.0", "incoop")),
-        Chain("Conad", listOf("conad", "spazio conad", "conad city", "conad superstore", "margherita conad", "sapori & dintorni")),
-        Chain("MD", listOf("md", "md discount", "md spa")),
-        Chain("C+C", listOf("c+c", "c+c cash and carry", "cc cash", "cash and carry", "cash & carry"))
+        Chain("Despar", listOf("despar", "eurospar", "interspar"),
+            listOf("despar", "eurospar", "interspar"), 0xFFD7262F),
+        Chain("Lidl", listOf("lidl"), listOf("lidl"), 0xFF0050AA),
+        Chain("Eurospin", listOf("eurospin"), listOf("eurospin"), 0xFF003B8E),
+        Chain("Esselunga", listOf("esselunga", "esselunga superstore", "laesse"), listOf("esselunga"), 0xFF1E5AA8),
+        Chain("Carrefour", listOf("carrefour", "carrefour express", "carrefour market", "carrefour iper", "carrefour ipermercati"),
+            listOf("carrefour-market", "carrefour-ipermercati", "carrefour-express", "carrefour"), 0xFF1C5BA8),
+        Chain("Alì", listOf("alì", "alìper", "aliper", "alì supermercati", "ali supermercati"),
+            listOf("ali", "ali-supermercati", "aliper"), 0xFFE30613),
+        Chain("Coop", listOf("coop", "ipercoop", "coop alleanza", "coop alleanza 3.0", "incoop"),
+            listOf("coop", "ipercoop", "coop-alleanza-3-0"), 0xFFE2001A),
+        Chain("Conad", listOf("conad", "spazio conad", "conad city", "conad superstore", "margherita conad", "sapori & dintorni"),
+            listOf("conad", "conad-superstore", "conad-city", "spazio-conad"), 0xFFE30613),
+        Chain("MD", listOf("md", "md discount", "md spa"), listOf("md"), 0xFFFFC20E),
+        Chain("C+C", listOf("c+c", "c+c cash and carry", "cc cash", "cash and carry", "cash & carry"),
+            listOf("c-c-cash-and-carry", "cc-cash-carry", "c-c", "cc"), 0xFF00843D)
     )
 
     fun isMine(store: String?): Boolean = store != null && MINE.any { it.name.equals(store, ignoreCase = true) }
+
+    fun byName(store: String?): Chain? = MINE.firstOrNull { it.name.equals(store, ignoreCase = true) }
 
     fun toJson(): String = MINE.joinToString(",", "[", "]") { c ->
         "{\"name\":${jsonStr(c.name)},\"keys\":" + c.keys.joinToString(",", "[", "]") { jsonStr(it) } + "}"
@@ -95,9 +110,40 @@ data class Offer(
     val url: String?,
     val sponsored: Boolean,
     val distanceKm: Double?,
+    val image: String? = null,
+    val endDate: String? = null,
     val firstSeen: Long,
     val lastSeen: Long,
     val active: Boolean
+)
+
+/** Un volantino in corso di una catena, letto per intero. */
+data class Flyer(
+    val id: String,
+    val chain: String,
+    val slug: String,
+    val start: String?,
+    val end: String?,
+    val logo: String?,
+    val itemCount: Int,
+    val fetched: Long
+)
+
+/** Una singola offerta dentro un volantino. */
+data class FlyerItem(
+    val flyerId: String,
+    val itemId: String,
+    val chain: String,
+    val title: String,
+    val brand: String?,
+    val price: Double,
+    val oldPrice: Double?,
+    val sale: String?,
+    val page: Int?,
+    val image: String?,
+    val url: String?,
+    val start: String?,
+    val end: String?
 )
 
 /** Un punto del grafico: giorno (yyyy-MM-dd) e miglior prezzo unitario del giorno. */

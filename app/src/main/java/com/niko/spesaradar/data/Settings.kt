@@ -27,6 +27,10 @@ class Settings(ctx: Context) {
         get() = p.getInt("hour", 7)
         set(v) = p.edit().putInt("hour", v.coerceIn(0, 23)).apply()
 
+    var lastFlyerRefresh: Long
+        get() = p.getLong("last_flyer_refresh", 0L)
+        set(v) = p.edit().putLong("last_flyer_refresh", v).apply()
+
     fun sourceEnabled(s: Source): Boolean = p.getBoolean("src_" + s.id, true)
     fun setSourceEnabled(s: Source, on: Boolean) = p.edit().putBoolean("src_" + s.id, on).apply()
 }

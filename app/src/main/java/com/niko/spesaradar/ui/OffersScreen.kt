@@ -5,6 +5,10 @@ package com.niko.spesaradar.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -73,7 +77,7 @@ fun OffersScreen(vm: AppViewModel, watchId: Long) {
         .filter {
             when (filter) {
                 Filter.ALL -> true
-                Filter.SHOPS -> it.source == Source.PROMOQUI
+                Filter.SHOPS -> it.source == Source.PROMOQUI || it.source == Source.FLYERS
                 Filter.SITES -> it.source == Source.SITES
                 Filter.AMAZON -> it.source == Source.AMAZON
                 Filter.ONLINE -> it.source == Source.TROVAPREZZI
@@ -148,7 +152,10 @@ fun OffersScreen(vm: AppViewModel, watchId: Long) {
                 }
             }
         } else {
-            LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+            LazyColumn(
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 items(shown, key = { it.key }) { o ->
                     OfferRow(
                         o,
@@ -160,7 +167,6 @@ fun OffersScreen(vm: AppViewModel, watchId: Long) {
                         },
                         onHistory = { vm.open(Screen.Trend(watchId, o.key)) }
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                 }
                 if (onlyMine && hiddenOthers > 0 && (filter == Filter.ALL || filter == Filter.SHOPS)) {
                     item {
@@ -189,72 +195,71 @@ fun OffersScreen(vm: AppViewModel, watchId: Long) {
 
 @Composable
 private fun OfferRow(o: Offer, isBest: Boolean, onOpen: () -> Unit, onHistory: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+    Surface(
+        Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 1.dp,
+        border = if (isBest) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
     ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.Top) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                ProductImage(o.image, Modifier.size(84.dp), corner = 14.dp)
+                SaleBadge(o.price, o.oldPrice, null, Modifier.align(Alignment.TopStart).padding(3.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                if (isBest) {
+                    Text("Miglior prezzo", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
                 Text(
                     o.title,
-                    Modifier.weight(1f),
                     fontWeight = FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyMedium
                 )
-                Spacer(Modifier.width(8.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(Units.euro(o.price), fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyLarge)
-                    o.oldPrice?.let {
-                        Text(
-                            Units.euro(it),
-                            style = MaterialTheme.typography.bodySmall,
-                            textDecoration = TextDecoration.LineThrough,
-                            color = MaterialTheme.colorScheme.outline
-                        )
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ChainTag(
+                        o.store ?: o.source.label,
+                        Modifier.weight(1f, fill = false)
+                    )
+                    val extra = buildList {
+                        if (o.source.online) add("online")
+                        o.distanceKm?.let { add(String.format(java.util.Locale.ITALY, "%.1f km", it)) }
+                    }.joinToString(" · ")
+                    if (extra.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(extra, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1)
                     }
                 }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val where = buildString {
-                    append(o.store ?: o.source.label)
-                    if (o.source != Source.PROMOQUI && o.store != o.source.label) append(" · online")
-                    o.qtyText?.let { append(" · ").append(it) }
-                    o.distanceKm?.let { append(" · ").append(String.format(java.util.Locale.ITALY, "%.1f km", it)) }
-                }
-                Text(
-                    where,
-                    Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (o.unitPrice != null) {
+                val exp = expiryText(o.endDate) ?: o.validity
+                val sub = listOfNotNull(o.qtyText, exp, if (o.sponsored) "sponsorizzato" else null).joinToString(" · ")
+                if (sub.isNotEmpty()) {
                     Text(
-                        Units.perUnit(o.unitPrice, o.unit),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = if (isBest) FontWeight.Bold else FontWeight.Normal,
-                        color = if (isBest) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        sub,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (expiryUrgent(o.endDate)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
-            val extra = buildList {
-                o.oldPrice?.let { old -> if (old > o.price) add("-" + ((1 - o.price / old) * 100).roundToInt() + "%") }
-                o.validity?.let { add(it) }
-                if (o.sponsored) add("sponsorizzato")
+            Spacer(Modifier.width(8.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                PriceColumn(o.price, o.oldPrice)
+                if (o.unitPrice != null) {
+                    Text(
+                        Units.perUnit(o.unitPrice, o.unit),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isBest) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onHistory, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Timeline, "Storico prezzo", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(18.dp))
+                }
             }
-            if (extra.isNotEmpty()) {
-                Text(
-                    extra.joinToString(" · "),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-            }
-        }
-        IconButton(onClick = onHistory) {
-            Icon(Icons.Filled.Timeline, "Storico prezzo", tint = MaterialTheme.colorScheme.outline)
         }
     }
 }

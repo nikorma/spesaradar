@@ -5,6 +5,8 @@ import com.niko.spesaradar.data.ChainSites
 import com.niko.spesaradar.data.Chains
 import com.niko.spesaradar.data.Db
 import com.niko.spesaradar.data.FetchLog
+import com.niko.spesaradar.data.Flyer
+import com.niko.spesaradar.data.FlyerItem
 import com.niko.spesaradar.data.Offer
 import com.niko.spesaradar.data.Settings
 import com.niko.spesaradar.data.Source
@@ -42,6 +44,7 @@ class RefreshEngine(private val ctx: Context) {
         /** Un solo aggiornamento alla volta (manuale o automatico). */
         val lock = Mutex()
         private const val MAX_PER_SOURCE = 25
+        private const val FLYER_MAX_AGE_MS = 20L * 60 * 60 * 1000
     }
 
     private val db = Db.get(ctx)
@@ -56,11 +59,14 @@ class RefreshEngine(private val ctx: Context) {
                 else "https://www.promoqui.it/$city/offerte/${Text.slug(query)}"
             Source.AMAZON -> "https://www.amazon.it/s?k=$q"
             Source.TROVAPREZZI -> "https://www.trovaprezzi.it/categoria.aspx?libera=$q&id=-1"
-            Source.SITES -> ""
+            Source.SITES, Source.FLYERS -> ""
         }
     }
 
     suspend fun refreshAll(progress: (String) -> Unit = {}): List<WatchOutcome> = lock.withLock {
+        if (System.currentTimeMillis() - settings.lastFlyerRefresh > FLYER_MAX_AGE_MS) {
+            readFlyers(force = false, progress = progress)
+        }
         val out = mutableListOf<WatchOutcome>()
         val list = withContext(Dispatchers.IO) { db.watches() }
         for ((i, w) in list.withIndex()) {
@@ -85,10 +91,24 @@ class RefreshEngine(private val ctx: Context) {
         val before = withContext(Dispatchers.IO) { db.offers(w.id, onlyActive = false) }
         val mainUnit = before.mapNotNull { it.unit }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
 
+        val flyerSeen = HashSet<String>()
         for (source in Source.entries) {
             if (!settings.sourceEnabled(source)) continue
             progress("${w.query} · ${source.label}")
             val cfg = cfgFor(source.id, w.query)
+
+            if (source == Source.FLYERS) {
+                // Ricerca nei volantini completi gia' scaricati sul telefono.
+                val offers = withContext(Dispatchers.IO) { db.flyerItems() }
+                    .filter { Text.relevant(w.query, it.title + " " + (it.brand ?: "")) }
+                    .take(60)
+                    .map { flyerOffer(w.id, it, now) }
+                withContext(Dispatchers.IO) {
+                    newOffers += db.saveSourceRun(w.id, source, offers.distinctBy { it.key }, now, day)
+                }
+                flyerSeen += offers.map { Text.norm((it.store ?: "") + " " + it.title) + "|" + it.price }
+                continue
+            }
 
             if (source == Source.SITES) {
                 // Un giro su ogni sito di catena; offerte salvate insieme, diagnostica separata.
@@ -114,6 +134,7 @@ class RefreshEngine(private val ctx: Context) {
             val (url, res) = if (source == Source.PROMOQUI) fetchPromoqui(w, cfg, progress)
                 else urlFor(source, w.query, settings.city).let { u -> u to fetcher.fetch(u, cfg) }
             val offers = pick(w, res).map { toOffer(w.id, source, it, now) }
+                .filterNot { flyerSeen.contains(Text.norm((it.store ?: "") + " " + it.title) + "|" + it.price) }
 
             withContext(Dispatchers.IO) {
                 log(source.id, now, url, res, offers.size)
@@ -206,10 +227,133 @@ class RefreshEngine(private val ctx: Context) {
             url = r.url,
             sponsored = r.sponsored,
             distanceKm = r.distanceKm,
+            image = r.image,
+            endDate = r.endDate,
             firstSeen = now,
             lastSeen = now,
             active = true
         )
+    }
+
+    private fun flyerOffer(watchId: Long, i: FlyerItem, now: Long): Offer {
+        val (up, qty) = Units.unitPrice(i.price, i.title, null)
+        return Offer(
+            watchId = watchId,
+            key = "flyers|" + i.flyerId + "|" + i.itemId,
+            source = Source.FLYERS,
+            store = i.chain,
+            title = i.title,
+            price = i.price,
+            oldPrice = i.oldPrice,
+            unitPrice = up?.value,
+            unit = up?.unit,
+            qtyText = qty?.text,
+            validity = i.end?.let { "fino al " + it },
+            url = i.url,
+            sponsored = false,
+            distanceKm = null,
+            image = i.image,
+            endDate = i.end,
+            firstSeen = now,
+            lastSeen = now,
+            active = true
+        )
+    }
+
+    /** Aggiornamento manuale dei soli volantini (tasto nella scheda Volantini). */
+    suspend fun refreshFlyers(force: Boolean, progress: (String) -> Unit = {}): Int = lock.withLock {
+        readFlyers(force, progress)
+    }
+
+    /**
+     * Legge per intero i volantini in corso delle catene scelte: per ogni catena apre la sua pagina
+     * su PromoQui, prende i volantini validi e ne scarica tutte le offerte.
+     * @return numero di volantini letti.
+     */
+    private suspend fun readFlyers(force: Boolean, progress: (String) -> Unit): Int {
+        val today = LocalDate.now().toString()
+        val now = System.currentTimeMillis()
+        withContext(Dispatchers.IO) { db.deleteExpiredFlyers(today) }
+        val known = withContext(Dispatchers.IO) { db.flyers().associateBy { it.id } }
+        var read = 0
+        for (chain in com.niko.spesaradar.data.Chains.MINE) {
+            val notes = mutableListOf<String>()
+            var lastUrl = ""
+            var lastErr: String? = null
+            var lastHtml: String? = null
+            var items = 0
+            for (slug in chain.slugs) {
+                progress("Volantini · ${chain.name} · $slug")
+                val u = "https://www.promoqui.it/volantino/$slug"
+                val r = fetcher.fetch(u, cfgFor("pqretailer", ""), timeoutMs = 40_000)
+                lastUrl = r.finalUrl ?: u
+                lastHtml = r.html
+                val active = r.flyers
+                    .filter { it.end == null || it.end >= today }
+                    .sortedByDescending { it.start ?: "" }
+                    .take(3)
+                notes += "$slug:${active.size}"
+                if (active.isEmpty()) {
+                    lastErr = r.error
+                    continue
+                }
+                lastErr = null
+                for (f in active) {
+                    val old = known[f.id]
+                    if (!force && old != null && old.itemCount > 0) { items += old.itemCount; continue }
+                    progress("Volantini · ${chain.name} · volantino ${f.id}")
+                    val fu = "https://www.promoqui.it/volantino/$slug/${f.id}"
+                    val fr = fetcher.fetch(fu, cfgFor("pqflyer", ""), timeoutMs = 60_000)
+                    lastHtml = fr.html ?: lastHtml
+                    val list = fr.items
+                        .filter { it.flyerId == null || it.flyerId == f.id }
+                        .map { it2 ->
+                            FlyerItem(
+                                flyerId = f.id,
+                                itemId = it2.gibId ?: (Text.norm(it2.title) + "|" + it2.price),
+                                chain = chain.name,
+                                title = it2.title,
+                                brand = null,
+                                price = it2.price,
+                                oldPrice = it2.oldPrice,
+                                sale = it2.sale,
+                                page = it2.page,
+                                image = it2.image,
+                                url = it2.url,
+                                start = it2.startDate ?: f.start,
+                                end = it2.endDate ?: f.end
+                            )
+                        }
+                        .distinctBy { it.itemId }
+                    notes += "${f.id}=${list.size}"
+                    if (list.isNotEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            db.saveFlyer(Flyer(f.id, chain.name, slug, f.start, f.end, r.logo, list.size, now), list)
+                        }
+                        items += list.size
+                        read++
+                    } else if (fr.error != null) {
+                        lastErr = fr.error
+                    }
+                    delay(800)
+                }
+            }
+            withContext(Dispatchers.IO) {
+                db.saveLog(
+                    FetchLog(
+                        source = "flyer:" + chain.name,
+                        at = now,
+                        url = lastUrl,
+                        count = items,
+                        method = notes.joinToString(" · "),
+                        error = if (items == 0) (lastErr ?: "Nessun volantino trovato") else null,
+                        htmlFile = lastHtml?.let { saveHtml("flyer_" + Text.slug(chain.name), it) }
+                    )
+                )
+            }
+        }
+        settings.lastFlyerRefresh = now
+        return read
     }
 
     private fun saveHtml(id: String, html: String): String? = try {

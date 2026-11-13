@@ -85,7 +85,8 @@ fun SettingsScreen(vm: AppViewModel) {
                 Source.entries.forEach { src ->
                     SwitchRow(
                         title = when (src) {
-                            Source.PROMOQUI -> "Volantini dei negozi (PromoQui)"
+                            Source.FLYERS -> "Volantini completi delle mie catene"
+                            Source.PROMOQUI -> "Altri volantini vicini (ricerca PromoQui)"
                             Source.SITES -> "Siti delle catene (Carrefour, Esselunga, Conad, Coop, Lidl, Eurospin)"
                             Source.AMAZON -> "Amazon.it"
                             Source.TROVAPREZZI -> "Altri negozi online (Trovaprezzi)"
@@ -133,7 +134,7 @@ fun SettingsScreen(vm: AppViewModel) {
 
             Spacer(Modifier.height(32.dp))
             Text(
-                "SpesaRadar 0.3 · © ${Year.now().value} nikorma — Orma Studio",
+                "SpesaRadar 0.4 · © ${Year.now().value} nikorma — Orma Studio",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline
             )

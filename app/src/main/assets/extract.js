@@ -268,8 +268,114 @@ var SR_EXTRACT = function (cfg) {
     return items;
   }
 
+  // ---- Dati strutturati di PromoQui (Next.js) ----
+  function nextData() {
+    var el = document.getElementById("__NEXT_DATA__");
+    if (!el) return null;
+    try { return JSON.parse(el.textContent); } catch (e) { return null; }
+  }
+
+  function walkAll(o, fn, depth) {
+    if (!o || typeof o !== "object" || (depth || 0) > 14) return;
+    fn(o);
+    if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) walkAll(o[i], fn, (depth || 0) + 1); return; }
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) walkAll(o[k], fn, (depth || 0) + 1);
+  }
+
+  function gibToItem(g) {
+    var st = g.settings || {};
+    var price = num((st.price_extended && st.price_extended.digits) || "") ;
+    if (price == null) price = pricesIn(String(st.price || ""))[0];
+    if (price == null) return null;
+    var old = num((st.starting_price && st.starting_price.digits) || "");
+    var fl = g.flyer || {};
+    var retailer = g.retailerName || null;
+    var href = g.href || null;
+    var slugM = href && href.match(/\/volantino\/([^\/?#]+)/);
+    var store = findChain(retailer || "") || (slugM && findChain(slugM[1].replace(/-/g, " "))) || retailer;
+    var dist = g.distance != null ? num(String(g.distance)) : null;
+    return {
+      title: String(g.title || "").trim().slice(0, 160),
+      store: store,
+      price: price,
+      oldPrice: old && old > price ? old : null,
+      unitText: null,
+      validity: fl.end_date ? "fino al " + fl.end_date : null,
+      endDate: fl.end_date || null,
+      startDate: fl.start_date || null,
+      url: href ? abs(href) : null,
+      sponsored: false,
+      distanceKm: dist != null ? Math.round(dist * 10) / 10 : null,
+      image: (st.image_url && /^https?:/.test(st.image_url) ? st.image_url : null) || g.image || null,
+      sale: st.sale || null,
+      brand: st.brand || null,
+      page: st.flyer_page ? parseInt(st.flyer_page, 10) : null,
+      gibId: g.id || null,
+      flyerId: g.flyer_id || fl.id || null,
+      retailerLogo: g.retailerLogo || null
+    };
+  }
+
+  function nextGibs() {
+    var d = nextData();
+    if (!d) return [];
+    var out = [], seen = {};
+    walkAll(d, function (o) {
+      if (Array.isArray(o) || !o.title || !(o.flyer_id || (o.flyer && o.flyer.id)) || !o.settings) return;
+      var id = o.id || (o.title + "|" + o.flyer_id);
+      if (seen[id]) return;
+      var it = gibToItem(o);
+      if (it && it.title) { seen[id] = 1; out.push(it); }
+    });
+    return out;
+  }
+
+  /** Pagina di una catena: elenco dei suoi volantini (id, date). */
+  function nextFlyers() {
+    var d = nextData();
+    var m = location.pathname.match(/\/volantino\/([^\/?#]+)/);
+    var slug = m ? m[1] : null;
+    var out = [], seen = {}, retailer = null;
+    if (d) {
+      // La catena della pagina: oggetto con lo stesso slug.
+      walkAll(d, function (o) {
+        if (!retailer && !Array.isArray(o) && o.slug === slug && o.id && (o.name || o.logo_url)) retailer = o;
+      });
+      var rid = retailer ? String(retailer.id) : null;
+      // Senza sapere qual e' la catena non prendo volantini dai dati (potrebbero essere di altri).
+      if (rid) walkAll(d, function (o) {
+        if (Array.isArray(o)) return;
+        var isFlyer = o.type === "flyer" || (o.end_date && o.start_date && (o.retailer_id || o.retailerId));
+        if (!isFlyer || !o.id || !o.end_date || seen[o.id]) return;
+        var r = String(o.retailer_id || o.retailerId || "");
+        if (rid && r && r !== rid) return;
+        seen[o.id] = 1;
+        out.push({ id: String(o.id), start: o.start_date || null, end: o.end_date || null,
+                   title: o.title || o.name || null, retailerId: r });
+      });
+    }
+    if (!out.length) {
+      var links = document.querySelectorAll('a[href*="/volantino/"]');
+      for (var i = 0; i < links.length; i++) {
+        var h = links[i].getAttribute("href") || "";
+        var mm = h.match(/\/volantino\/([^\/?#]+)\/(\d+)/);
+        if (mm && (!slug || mm[1] === slug) && !seen[mm[2]]) {
+          seen[mm[2]] = 1;
+          out.push({ id: mm[2], start: null, end: null, title: null, retailerId: "" });
+        }
+      }
+    }
+    return {
+      flyers: out,
+      logo: retailer ? (retailer.logo_url || retailer.logo || null) : null,
+      name: retailer ? retailer.name : null
+    };
+  }
+
   // PromoQui / ShopFully: schede con data-testid stabili.
   function promoqui() {
+    var structured = nextGibs();
+    if (structured.length) return structured;
     var cards = document.querySelectorAll('a[data-testid="flyer_gib"]');
     var items = [], seen = {};
     for (var i = 0; i < cards.length; i++) {
@@ -335,7 +441,18 @@ var SR_EXTRACT = function (cfg) {
   var res = { items: [], follow: null, info: { url: location.href, title: document.title, method: "" } };
   try {
     var src = cfg && cfg.source;
-    if (src === "promoqui") {
+    if (src === "pqretailer") {
+      var fr = nextFlyers();
+      res.flyers = fr.flyers;
+      res.info.logo = fr.logo;
+      res.info.name = fr.name;
+      res.info.method = "catena";
+      if (/404|non trovata|not found/i.test(document.title)) res.info.notFound = true;
+    } else if (src === "pqflyer") {
+      res.items = nextGibs();
+      res.info.method = "volantino-dati";
+      if (!res.items.length) { res.items = promoqui(); res.info.method = "volantino-schede"; }
+    } else if (src === "promoqui") {
       res.items = promoqui();
       res.info.method = "promoqui";
       if (!res.items.length) { res.items = genericCards(document.body); res.info.method = "promoqui-generico"; }
