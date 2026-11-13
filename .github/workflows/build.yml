@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -37,3 +40,14 @@ jobs:
         with:
           name: SpesaRadar-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Pubblica APK (link diretto)
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk SpesaRadar.apk
+          VER=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | cut -d'"' -f2)
+          gh release delete ultima --yes --cleanup-tag 2>/dev/null || true
+          gh release create ultima SpesaRadar.apk --title "SpesaRadar $VER" --notes "Ultima versione compilata." --latest
